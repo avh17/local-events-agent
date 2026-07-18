@@ -1,24 +1,61 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
 function LoginForm() {
   const [email, setEmail] = useState("");
-  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [token, setToken] = useState("");
+  const [step, setStep] = useState<"email" | "code">("email");
+  const [status, setStatus] = useState<"idle" | "sending" | "verifying" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+  const router = useRouter();
   const params = useSearchParams();
   const linkError = params.get("error") === "link";
 
-  async function sendLink(e: React.FormEvent) {
+  async function sendCode(e: React.FormEvent) {
     e.preventDefault();
     setStatus("sending");
+    setErrorMessage("");
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
     });
-    setStatus(error ? "error" : "sent");
+
+    if (error) {
+      setErrorMessage(
+        error.status === 429
+          ? "Too many code requests. Wait at least 60 seconds and try again."
+          : "Couldn't send a code. Try again.",
+      );
+      setStatus("error");
+      return;
+    }
+
+    setStep("code");
+    setStatus("idle");
+  }
+
+  async function verifyCode(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("verifying");
+    setErrorMessage("");
+    const supabase = createClient();
+    const { error } = await supabase.auth.verifyOtp({
+      email,
+      token,
+      type: "email",
+    });
+
+    if (error) {
+      setErrorMessage("That code is invalid or expired. Check the code and try again.");
+      setStatus("error");
+      return;
+    }
+
+    router.replace("/chat");
+    router.refresh();
   }
 
   return (
@@ -26,23 +63,61 @@ function LoginForm() {
       <h1>
         Sign in to <em>Weekender</em>
       </h1>
-      <p>No passwords — we&apos;ll email you a magic link.</p>
-      <form className="login-form" onSubmit={sendLink}>
-        <input
-          type="email"
-          required
-          placeholder="you@example.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
-        <button className="btn" type="submit" disabled={status === "sending"}>
-          {status === "sending" ? "Sending…" : "Send link"}
+      <p>
+        {step === "email"
+          ? "No passwords — we'll email you a six-digit code."
+          : `Enter the code sent to ${email}.`}
+      </p>
+      {step === "email" ? (
+        <form className="login-form" onSubmit={sendCode}>
+          <input
+            type="email"
+            required
+            autoComplete="email"
+            placeholder="you@example.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+          <button className="btn" type="submit" disabled={status === "sending"}>
+            {status === "sending" ? "Sending…" : "Send code"}
+          </button>
+        </form>
+      ) : (
+        <form className="login-form" onSubmit={verifyCode}>
+          <input
+            type="text"
+            required
+            autoComplete="one-time-code"
+            inputMode="numeric"
+            pattern="[0-9]{6}"
+            maxLength={6}
+            aria-label="Six-digit verification code"
+            placeholder="123456"
+            value={token}
+            onChange={(e) => setToken(e.target.value.replace(/\D/g, "").slice(0, 6))}
+          />
+          <button className="btn" type="submit" disabled={status === "verifying" || token.length !== 6}>
+            {status === "verifying" ? "Verifying…" : "Verify code"}
+          </button>
+        </form>
+      )}
+      {step === "code" && status !== "verifying" && (
+        <button
+          className="text-button"
+          type="button"
+          onClick={() => {
+            setStep("email");
+            setToken("");
+            setStatus("idle");
+            setErrorMessage("");
+          }}
+        >
+          Use a different email
         </button>
-      </form>
-      {status === "sent" && <p className="notice">Check your inbox — the link signs you straight in.</p>}
-      {status === "error" && <p className="notice error">Couldn&apos;t send the link. Try again?</p>}
-      {linkError && status === "idle" && (
-        <p className="notice error">That link expired or was already used. Request a fresh one.</p>
+      )}
+      {status === "error" && <p className="notice error">{errorMessage}</p>}
+      {linkError && step === "email" && status === "idle" && (
+        <p className="notice error">That link expired or was already used. Request a code instead.</p>
       )}
     </div>
   );

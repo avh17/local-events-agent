@@ -141,6 +141,16 @@ a {
   color: var(--accent);
 }
 
+.text-button {
+  margin-top: 14px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 /* ---------- chat ---------- */
 .thread {
   flex: 1;
