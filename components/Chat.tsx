@@ -13,7 +13,7 @@ interface ChatMessage {
 const GREETING: ChatMessage = {
   role: "assistant",
   content:
-    "Hey — I'm your events concierge. Tell me where you're based and what kind of nights out you love, and I'll start finding things worth booking. Or just ask: \"what should I do this weekend?\"",
+    "Hey, I'm your local events scout. Tell me where you are and what kind of night sounds good. Or just ask, \"What should I do this weekend?\"",
 };
 
 export function Chat({ userId, userEmail }: { userId: string; userEmail: string }) {
@@ -68,7 +68,7 @@ export function Chat({ userId, userEmail }: { userId: string; userEmail: string 
         ...m,
         {
           role: "assistant",
-          content: `Hit a snag: ${err instanceof Error ? err.message : "unknown error"}. Try again?`,
+          content: `That search didn't go through: ${err instanceof Error ? err.message : "unknown error"}. Try again?`,
         },
       ]);
     } finally {

@@ -6,7 +6,7 @@ A multi-user, chat-first web app: an AI concierge that finds events matching eac
 
 - **Next.js 15 (App Router, TypeScript)** — chat UI + API routes, deployed on Vercel
 - **Supabase** — magic-link auth, Postgres (profiles + feedback) with RLS
-- **Claude API (`claude-sonnet-5`)** — manual tool-calling agent loop with three tools:
+- **Claude on Amazon Bedrock (`us.anthropic.claude-sonnet-4-6`)** — Bedrock Converse tool-calling agent loop with three tools:
   - `search_events` — Ticketmaster Discovery API, pre-filtered by distance (haversine from saved home base) and a soft budget filter
   - `update_profile` — saves home base (geocoded via Nominatim), budget cap, max distance, and taste signals
   - `present_events` — structured event cards captured server-side and rendered in the UI with booking links + 👍/👎 feedback
@@ -20,7 +20,7 @@ Product rules baked in (see `lib/budget.ts`, `lib/agent/system.ts`):
 
 ## Development (TDD)
 
-The core logic is fully unit-tested (Vitest, 42 tests): geo math, budget policy, weekend windows, Ticketmaster URL-building/mapping, geocoding, all three agent tools, the system prompt, and the agent loop (with a mocked Anthropic client). API routes and UI are thin wrappers over these tested modules.
+The core logic is fully unit-tested (Vitest, 42 tests): geo math, budget policy, weekend windows, Ticketmaster URL-building/mapping, geocoding, all three agent tools, the system prompt, and the agent loop (with a mocked Bedrock client). API routes and UI are thin wrappers over these tested modules.
 
 ```bash
 npm install
@@ -42,7 +42,7 @@ npm run dev       # local dev server (needs .env.local, see below)
 
 | Service | Where | Used for |
 |---|---|---|
-| Anthropic | [console.anthropic.com](https://console.anthropic.com) | the agent loop + digest curation |
+| Amazon Bedrock | [AWS Bedrock console](https://console.aws.amazon.com/bedrock/) | Claude inference for the agent loop + digest curation |
 | Ticketmaster Discovery | [developer.ticketmaster.com](https://developer.ticketmaster.com) (free) | event listings |
 | Resend | [resend.com](https://resend.com) (free tier) | weekly digest email; verify a sending domain for `DIGEST_FROM_EMAIL` |
 
@@ -51,6 +51,11 @@ npm run dev       # local dev server (needs .env.local, see below)
 ```bash
 cp .env.example .env.local   # then fill in every value
 ```
+
+Set `AWS_BEARER_TOKEN_BEDROCK` to a Bedrock API key. `AWS_REGION` defaults to
+`us-east-1`, and `BEDROCK_MODEL_ID` defaults to the US cross-region Claude
+Sonnet 4.6 inference profile. In production, the standard AWS IAM credential
+chain can be used instead of a long-lived API key.
 
 ### 4. Deploy (Vercel)
 

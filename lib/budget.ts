@@ -13,7 +13,10 @@ export function assessBudget(
   budgetCap: number | null | undefined,
 ): BudgetVerdict {
   if (priceMin === null || priceMin === undefined) {
-    return { include: true, note: "price unlisted — check the listing before you go" };
+    return {
+      include: true,
+      note: "The event feed did not include a price. Check the live listing against your budget.",
+    };
   }
   if (budgetCap === null || budgetCap === undefined) {
     return { include: true };

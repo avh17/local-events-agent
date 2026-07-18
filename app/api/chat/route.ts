@@ -1,14 +1,12 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextResponse } from "next/server";
 import { runAgentLoop } from "@/lib/agent/loop";
 import { buildSystemPrompt } from "@/lib/agent/system";
 import type { ToolContext } from "@/lib/agent/tools";
+import { BEDROCK_MODEL_ID, createBedrockClient } from "@/lib/bedrock";
 import { loadOrCreateProfile, makeSaveProfile } from "@/lib/profile";
 import { createClient } from "@/lib/supabase/server";
 
 export const maxDuration = 60;
-
-const MODEL = "claude-sonnet-5";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -38,6 +36,7 @@ export async function POST(request: Request) {
   const save = makeSaveProfile(supabase, user.id);
   const ctx: ToolContext = {
     profile,
+    recentFeedback: feedbackRows ?? [],
     saveProfile: async (patch) => {
       // Keep ctx.profile fresh so later tool calls in the same turn see updates.
       ctx.profile = await save(patch);
@@ -50,13 +49,13 @@ export async function POST(request: Request) {
     .filter((m) => typeof m?.content === "string" && m.content.trim().length > 0)
     .map((m) => ({
       role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
-      content: m.content,
+      content: [{ text: m.content }],
     }));
 
   try {
     const result = await runAgentLoop({
-      anthropic: new Anthropic(),
-      model: MODEL,
+      bedrock: createBedrockClient(),
+      model: BEDROCK_MODEL_ID,
       system: buildSystemPrompt(profile, feedbackRows ?? [], new Date()),
       messages,
       ctx,

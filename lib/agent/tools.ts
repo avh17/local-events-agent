@@ -1,12 +1,13 @@
-import type Anthropic from "@anthropic-ai/sdk";
+import type { AgentTool } from "../bedrock";
 import { assessBudget } from "../budget";
 import { haversineMiles } from "../geo";
 import { geocode, type GeocodeResult } from "../geocode";
 import { searchTicketmaster, type TMEvent, type TMSearchParams } from "../ticketmaster";
-import { EMPTY_TASTE, type EventCard, type Profile } from "../types";
+import { EMPTY_TASTE, type EventCard, type FeedbackRow, type Profile } from "../types";
 
 export interface ToolContext {
   profile: Profile;
+  recentFeedback?: FeedbackRow[];
   saveProfile: (patch: Partial<Profile>) => Promise<Profile>;
   /** Injectable for tests; defaults to the live Ticketmaster client. */
   searchFn?: (params: TMSearchParams) => Promise<TMEvent[]>;
@@ -20,11 +21,11 @@ export interface ToolOutcome {
   isError?: boolean;
 }
 
-export const toolDefinitions: Anthropic.Tool[] = [
+export const toolDefinitions: AgentTool[] = [
   {
     name: "search_events",
     description:
-      "Search live event listings (Ticketmaster Discovery). Returns candidate events already filtered by the user's saved max distance and budget cap, with per-event straight-line distance from their home base and budget labels. Prefer use_home_base=true when the user wants events near them; pass city only for searches elsewhere.",
+      "Search live event listings (Ticketmaster Discovery). Returns candidate events already filtered by the user's saved max distance and budget cap, with per-event straight-line distance from their home base and budget labels. An explicit city or location replaces the saved home base and always takes precedence over use_home_base.",
     input_schema: {
       type: "object",
       properties: {
@@ -33,7 +34,10 @@ export const toolDefinitions: Anthropic.Tool[] = [
           type: "string",
           description: "Ticketmaster segment name: Music, Sports, Arts & Theatre, Film, Miscellaneous",
         },
-        city: { type: "string", description: "City to search when NOT using the home base" },
+        city: {
+          type: "string",
+          description: "New city, ZIP code, or neighborhood to search; replaces the saved home base",
+        },
         use_home_base: {
           type: "boolean",
           description: "Anchor the search to the user's saved home base coordinates",
@@ -48,7 +52,7 @@ export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "update_profile",
     description:
-      "Save or update the user's profile: home base (geocoded automatically), budget cap in USD, max distance in miles, taste additions (likes/dislikes/vibes/notes), and weekly digest opt-in. Call this as soon as the user shares any of these — do not batch up.",
+      "Save or update the user's profile: home base (geocoded automatically), budget cap in USD, max distance in miles, taste additions (likes/dislikes/vibes/notes), and weekly digest opt-in. Call this as soon as the user shares any of these. Do not batch them up.",
     input_schema: {
       type: "object",
       properties: {
@@ -66,7 +70,7 @@ export const toolDefinitions: Anthropic.Tool[] = [
   {
     name: "present_events",
     description:
-      "Show curated event picks to the user as rich cards with booking links. Always use this to present events — never paste event lists into prose. Each card needs a 'reason' tied to the user's tastes, and a 'budget_note' when the price is unlisted or over their cap.",
+      "Show curated event picks as rich cards with booking links. Never paste event lists into prose. Each card needs a short, natural 'reason' grounded in the user's tastes and the listing, plus a 'budget_note' when the event feed did not supply a price or the price is over their cap.",
     input_schema: {
       type: "object",
       properties: {
@@ -86,7 +90,11 @@ export const toolDefinitions: Anthropic.Tool[] = [
               price_min: { type: "number" },
               price_max: { type: "number" },
               distance_miles: { type: "number" },
-              reason: { type: "string", description: "Why this matches the user, citing their taste profile" },
+              reason: {
+                type: "string",
+                description:
+                  "One or two natural sentences (35 words max) connecting a specific user taste or past reaction to a detail in this listing. Sound like a friend making the case. Avoid generic praise, promotional language, and invented details.",
+              },
               budget_note: { type: "string", description: "Transparency label for price caveats" },
             },
             required: ["id", "name", "url", "date", "venue", "city", "reason"],
@@ -101,11 +109,32 @@ export const toolDefinitions: Anthropic.Tool[] = [
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 async function searchEvents(input: any, ctx: ToolContext): Promise<ToolOutcome> {
-  const p = ctx.profile;
+  let p = ctx.profile;
   let lat: number | undefined;
   let lng: number | undefined;
+  const explicitLocation =
+    typeof input?.city === "string" && input.city.trim().length > 0
+      ? input.city.trim()
+      : undefined;
 
-  if (input?.use_home_base) {
+  if (explicitLocation) {
+    const geocodeLocation = ctx.geocodeFn ?? geocode;
+    const loc = await geocodeLocation(explicitLocation);
+    if (!loc) {
+      return {
+        result: `Could not find "${explicitLocation}" on the map. Ask the user to clarify the city, state, or ZIP code.`,
+        isError: true,
+      };
+    }
+    p = await ctx.saveProfile({
+      home_base_text: explicitLocation,
+      home_lat: loc.lat,
+      home_lng: loc.lng,
+    });
+    ctx.profile = p;
+    lat = loc.lat;
+    lng = loc.lng;
+  } else if (input?.use_home_base) {
     if (p.home_lat == null || p.home_lng == null) {
       return {
         result:
@@ -121,7 +150,7 @@ async function searchEvents(input: any, ctx: ToolContext): Promise<ToolOutcome> 
   const found = await search({
     keyword: input?.keyword,
     category: input?.category,
-    city: lat === undefined ? input?.city : undefined,
+    city: undefined,
     lat,
     lng,
     radiusMiles: input?.radius_miles ?? p.max_distance_miles ?? 30,
@@ -168,6 +197,7 @@ async function searchEvents(input: any, ctx: ToolContext): Promise<ToolOutcome> 
     events: events.slice(0, input?.max_results ?? 25),
     excluded_over_budget: excludedOverBudget,
     excluded_too_far: excludedTooFar,
+    ...(explicitLocation ? { home_base_updated: p.home_base_text } : {}),
   };
   return { result: JSON.stringify(payload) };
 }
@@ -180,7 +210,7 @@ async function updateProfile(input: any, ctx: ToolContext): Promise<ToolOutcome>
     const loc = await geo(input.home_base);
     if (!loc) {
       return {
-        result: `Could not find "${input.home_base}" on the map. Ask the user to clarify — a city plus state usually works.`,
+        result: `Could not find "${input.home_base}" on the map. Ask the user to clarify. A city plus state usually works.`,
         isError: true,
       };
     }
@@ -220,7 +250,7 @@ async function updateProfile(input: any, ctx: ToolContext): Promise<ToolOutcome>
 function presentEvents(input: any): ToolOutcome {
   const events = (Array.isArray(input?.events) ? input.events : []) as EventCard[];
   return {
-    result: `Presented ${events.length} event card(s) to the user with booking links. Do not repeat their details in prose — add only a brief closing remark or next step.`,
+    result: `Presented ${events.length} event card(s) to the user with booking links. Do not repeat their details in prose. Add only one short, natural line if it helps.`,
     events,
   };
 }

@@ -5,8 +5,8 @@ import { assessBudget } from "../lib/budget";
 // - Within cap: include, no note.
 // - Up to 25% over cap: include, flagged as over budget.
 // - More than 25% over cap: exclude.
-// - Unknown price: include, flagged as unlisted (never silently hidden).
-// - No cap set: everything included; unknown prices still flagged.
+// - Unknown feed price: include, link to the live listing (never silently hidden).
+// - No cap set: everything included; missing feed prices are still explained.
 describe("assessBudget", () => {
   it("includes events at or under the cap with no note", () => {
     expect(assessBudget(30, 50)).toEqual({ include: true });
@@ -27,11 +27,12 @@ describe("assessBudget", () => {
     expect(assessBudget(1000, 50).include).toBe(false);
   });
 
-  it("includes unknown-price events with an 'unlisted' note", () => {
+  it("explains when the event feed did not supply a price", () => {
     for (const price of [undefined, null]) {
       const v = assessBudget(price, 50);
       expect(v.include).toBe(true);
-      expect(v.note!.toLowerCase()).toContain("unlisted");
+      expect(v.note!.toLowerCase()).toContain("event feed");
+      expect(v.note!.toLowerCase()).toContain("live listing");
     }
   });
 
@@ -40,6 +41,6 @@ describe("assessBudget", () => {
     expect(assessBudget(500, undefined)).toEqual({ include: true });
     const unknown = assessBudget(undefined, null);
     expect(unknown.include).toBe(true);
-    expect(unknown.note!.toLowerCase()).toContain("unlisted");
+    expect(unknown.note!.toLowerCase()).toContain("event feed");
   });
 });

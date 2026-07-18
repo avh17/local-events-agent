@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { displayBudgetNote, isTicketmasterUrl } from "@/lib/booking";
 import type { EventCard } from "@/lib/types";
 
 export function EventCards({ events }: { events: EventCard[] }) {
@@ -14,15 +15,17 @@ export function EventCards({ events }: { events: EventCard[] }) {
 }
 
 function priceLabel(ev: EventCard): string | null {
-  if (ev.price_min == null) return null;
+  if (ev.price_min == null) return "live price on listing";
   if (ev.price_max != null && ev.price_max !== ev.price_min) {
-    return `$${ev.price_min}–$${ev.price_max}`;
+    return `$${ev.price_min} to $${ev.price_max}`;
   }
   return `from $${ev.price_min}`;
 }
 
 function Card({ event }: { event: EventCard }) {
   const [vote, setVote] = useState<"up" | "down" | null>(null);
+  const isTicketmaster = isTicketmasterUrl(event.url);
+  const budgetNote = displayBudgetNote(event.budget_note);
 
   async function sendFeedback(signal: "up" | "down" | "booked") {
     if (signal !== "booked") setVote(signal);
@@ -51,7 +54,7 @@ function Card({ event }: { event: EventCard }) {
           {price && <> · {price}</>}
         </div>
         <div className="reason">{event.reason}</div>
-        {event.budget_note && <div className="budget-note">⚠ {event.budget_note}</div>}
+        {budgetNote && <div className="budget-note">⚠ {budgetNote}</div>}
         <div className="actions">
           <a
             className="book"
@@ -60,7 +63,7 @@ function Card({ event }: { event: EventCard }) {
             rel="noopener noreferrer"
             onClick={() => sendFeedback("booked")}
           >
-            Book it ↗
+            {isTicketmaster ? "View tickets ↗" : "Book it ↗"}
           </a>
           <button
             className={`thumb ${vote === "up" ? "active" : ""}`}

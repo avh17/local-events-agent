@@ -85,6 +85,14 @@ describe("toolDefinitions", () => {
       expect((tool.input_schema as any).type).toBe("object");
     }
   });
+
+  it("asks the model for short, grounded card reasons", () => {
+    const presentEvents = toolDefinitions.find((tool) => tool.name === "present_events");
+    const reason = (presentEvents?.input_schema as any).properties.events.items.properties.reason;
+    expect(reason.description).toContain("35 words max");
+    expect(reason.description).toContain("specific user taste");
+    expect(reason.description).toContain("Avoid generic praise");
+  });
 });
 
 describe("executeTool: search_events", () => {
@@ -96,7 +104,7 @@ describe("executeTool: search_events", () => {
     expect(outcome.isError).toBeFalsy();
 
     // Search was anchored to the profile's home coordinates
-    const params = searchFn.mock.calls[0][0] as any;
+    const params = (searchFn as any).mock.calls[0][0];
     expect(params.lat).toBeCloseTo(33.4255);
     expect(params.lng).toBeCloseTo(-111.94);
 
@@ -114,7 +122,7 @@ describe("executeTool: search_events", () => {
     expect(cheap.budget_note).toBeUndefined();
 
     const unknown = payload.events.find((e: any) => e.id === "near-unknown");
-    expect(unknown.budget_note.toLowerCase()).toContain("unlisted");
+    expect(unknown.budget_note.toLowerCase()).toContain("event feed");
   });
 
   it("reports filtered-out counts so the model can be transparent", async () => {
@@ -123,6 +131,74 @@ describe("executeTool: search_events", () => {
     const payload = JSON.parse(outcome.result);
     expect(payload.excluded_over_budget).toBe(1);
     expect(payload.excluded_too_far).toBe(1);
+  });
+
+  it("replaces the saved home base when an explicit location is searched", async () => {
+    const sanJoseEvent: TMEvent = {
+      ...nearCheap,
+      id: "san-jose-show",
+      name: "San Jose Jazz Night",
+      city: "San Jose",
+      lat: 37.335,
+      lng: -121.89,
+    };
+    const searchFn = vi.fn(async () => [sanJoseEvent]);
+    const geocodeFn = vi.fn(async () => ({
+      lat: 37.3382,
+      lng: -121.8863,
+      display: "San Jose, Santa Clara County, California, USA",
+    }));
+    const saveProfile = vi.fn(async (patch: Partial<Profile>) => ({
+      ...makeProfile(),
+      ...patch,
+    }));
+    const ctx = makeCtx({ searchFn, geocodeFn, saveProfile });
+
+    const outcome = await executeTool(
+      "search_events",
+      { city: "San Jose, CA", use_home_base: true, radius_miles: 10 },
+      ctx,
+    );
+
+    expect(outcome.isError).toBeFalsy();
+    expect(geocodeFn).toHaveBeenCalledWith("San Jose, CA");
+    expect(saveProfile).toHaveBeenCalledWith({
+      home_base_text: "San Jose, CA",
+      home_lat: 37.3382,
+      home_lng: -121.8863,
+    });
+
+    const params = (searchFn as any).mock.calls[0][0];
+    expect(params.city).toBeUndefined();
+    expect(params.lat).toBeCloseTo(37.3382);
+    expect(params.lng).toBeCloseTo(-121.8863);
+
+    const payload = JSON.parse(outcome.result);
+    expect(payload.home_base_updated).toBe("San Jose, CA");
+    expect(payload.excluded_too_far).toBe(0);
+    expect(payload.events[0].id).toBe("san-jose-show");
+    expect(payload.events[0].distance_miles).toBeLessThan(1);
+    expect(ctx.profile.home_base_text).toBe("San Jose, CA");
+  });
+
+  it("does not replace the home base when an explicit location cannot be geocoded", async () => {
+    const saveProfile = vi.fn(async (patch: Partial<Profile>) => ({
+      ...makeProfile(),
+      ...patch,
+    }));
+    const outcome = await executeTool(
+      "search_events",
+      { city: "not-a-real-place", use_home_base: true },
+      makeCtx({
+        geocodeFn: vi.fn(async () => null),
+        searchFn: vi.fn(async () => []),
+        saveProfile,
+      }),
+    );
+
+    expect(outcome.isError).toBe(true);
+    expect(outcome.result).toContain("not-a-real-place");
+    expect(saveProfile).not.toHaveBeenCalled();
   });
 
   it("errors gracefully when asked to use home base but none is saved", async () => {

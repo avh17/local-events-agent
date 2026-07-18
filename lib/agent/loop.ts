@@ -1,22 +1,20 @@
-import type Anthropic from "@anthropic-ai/sdk";
-import { executeTool, toolDefinitions, type ToolContext } from "./tools";
+import type { Message } from "@aws-sdk/client-bedrock-runtime";
+import {
+  toBedrockTools,
+  type AgentTool,
+  type BedrockConverseClient,
+} from "../bedrock";
 import type { EventCard } from "../types";
-
-/** Minimal client surface so tests can inject a fake. */
-export interface MinimalAnthropicClient {
-  messages: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    create(params: any): Promise<any>;
-  };
-}
+import { humanizeEventReasons } from "./humanizer";
+import { executeTool, toolDefinitions, type ToolContext } from "./tools";
 
 export interface AgentLoopOptions {
-  anthropic: MinimalAnthropicClient;
+  bedrock: BedrockConverseClient;
   model: string;
   system: string;
-  messages: Anthropic.MessageParam[];
+  messages: Message[];
   ctx: ToolContext;
-  tools?: Anthropic.Tool[];
+  tools?: AgentTool[];
   maxIterations?: number;
   maxTokens?: number;
 }
@@ -27,53 +25,58 @@ export interface AgentResult {
 }
 
 /**
- * Manual tool-use loop: call the model, execute requested tools, feed results
- * back, repeat until the model stops calling tools or we hit the iteration cap.
- * present_events cards are collected out-of-band and returned for the UI.
+ * Manual tool-use loop: call Bedrock Converse, execute requested tools, feed
+ * results back, and repeat until the model stops or the iteration cap is hit.
  */
 export async function runAgentLoop(opts: AgentLoopOptions): Promise<AgentResult> {
-  const messages: Anthropic.MessageParam[] = [...opts.messages];
+  const messages: Message[] = [...opts.messages];
   const collected: EventCard[] = [];
   const maxIterations = opts.maxIterations ?? 8;
   let lastText = "";
 
   for (let i = 0; i < maxIterations; i++) {
-    const response = await opts.anthropic.messages.create({
-      model: opts.model,
-      max_tokens: opts.maxTokens ?? 8000,
-      system: opts.system,
-      tools: opts.tools ?? toolDefinitions,
+    const response = await opts.bedrock.converse({
+      modelId: opts.model,
+      inferenceConfig: { maxTokens: opts.maxTokens ?? 8000 },
+      system: [{ text: opts.system }],
+      toolConfig: { tools: toBedrockTools(opts.tools ?? toolDefinitions) },
       messages,
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const content: any[] = response.content ?? [];
-    const texts = content.filter((b) => b.type === "text").map((b) => b.text);
+    const assistantMessage = response.output?.message;
+    const content = assistantMessage?.content ?? [];
+    const texts = content.flatMap((block) => block.text === undefined ? [] : [block.text]);
     if (texts.length > 0) lastText = texts.join("\n\n");
 
-    if (response.stop_reason !== "tool_use") break;
+    if (response.stopReason !== "tool_use" || !assistantMessage) break;
 
-    const toolUses = content.filter((b) => b.type === "tool_use");
-    // Echo the full assistant turn (including thinking blocks) back verbatim.
-    messages.push({ role: "assistant", content: response.content });
+    const toolUses = content.flatMap((block) => block.toolUse ? [block.toolUse] : []);
+    messages.push(assistantMessage);
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const results: any[] = [];
-    for (const tu of toolUses) {
-      const outcome = await executeTool(tu.name, tu.input, opts.ctx);
+    const results: NonNullable<Message["content"]> = [];
+    for (const toolUse of toolUses) {
+      const outcome = await executeTool(toolUse.name ?? "", toolUse.input, opts.ctx);
       if (outcome.events) collected.push(...outcome.events);
       results.push({
-        type: "tool_result",
-        tool_use_id: tu.id,
-        content: outcome.result,
-        ...(outcome.isError ? { is_error: true } : {}),
+        toolResult: {
+          toolUseId: toolUse.toolUseId,
+          content: [{ text: outcome.result }],
+          status: outcome.isError ? "error" : "success",
+        },
       });
     }
     messages.push({ role: "user", content: results });
   }
 
   const fallback = collected.length > 0
-    ? "Here are some picks for you."
-    : "Sorry — I couldn't finish that request. Mind trying again?";
-  return { reply: lastText || fallback, events: collected };
+    ? "I found a few that look promising."
+    : "I couldn't finish that search. Try it again in a moment?";
+  const events = await humanizeEventReasons({
+    bedrock: opts.bedrock,
+    model: opts.model,
+    profile: opts.ctx.profile,
+    feedback: opts.ctx.recentFeedback,
+    events: collected,
+  });
+  return { reply: lastText || fallback, events };
 }

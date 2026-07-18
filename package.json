@@ -10,7 +10,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.112.1",
+    "@aws-sdk/client-bedrock-runtime": "^3.1090.0",
     "@supabase/ssr": "^0.7.0",
     "@supabase/supabase-js": "^2.49.4",
     "next": "^15.3.3",

@@ -28,49 +28,62 @@ const card = {
   reason: "Matches your indie taste",
 };
 
-function fakeAnthropic(responses: any[]) {
+function fakeBedrock(responses: any[]) {
   const calls: any[] = [];
   return {
     calls,
-    client: {
-      messages: {
-        create: vi.fn(async (params: any) => {
-          calls.push(params);
-          const r = responses[Math.min(calls.length - 1, responses.length - 1)];
-          return r;
-        }),
-      },
-    },
+    client: { converse: vi.fn(async (params: any) => {
+      calls.push(params);
+      return responses[Math.min(calls.length - 1, responses.length - 1)];
+    }) },
   };
 }
 
 describe("runAgentLoop", () => {
   it("executes tool calls, collects presented cards, and returns the final text", async () => {
-    const { client, calls } = fakeAnthropic([
+    const { client, calls } = fakeBedrock([
       {
-        stop_reason: "tool_use",
-        content: [
-          { type: "text", text: "Let me pull some options." },
-          { type: "tool_use", id: "tu_1", name: "present_events", input: { events: [card] } },
-        ],
+        stopReason: "tool_use",
+        output: { message: { role: "assistant", content: [
+          { text: "Let me pull some options." },
+          { toolUse: { toolUseId: "tu_1", name: "present_events", input: { events: [card] } } },
+        ] } },
       },
       {
-        stop_reason: "end_turn",
-        content: [{ type: "text", text: "Enjoy the show!" }],
+        stopReason: "end_turn",
+        output: { message: { role: "assistant", content: [{ text: "Enjoy the show!" }] } },
+      },
+      {
+        stopReason: "tool_use",
+        output: { message: { role: "assistant", content: [
+          { toolUse: {
+            toolUseId: "tu_humanizer",
+            name: "return_humanized_reasons",
+            input: {
+              rewrites: [{
+                id: "ev-1",
+                reason: "You like indie rock. This one is at the Van Buren.",
+              }],
+            },
+          } },
+        ] } },
       },
     ]);
 
     const result = await runAgentLoop({
-      anthropic: client as any,
-      model: "claude-sonnet-5",
+      bedrock: client as any,
+      model: "us.anthropic.claude-sonnet-4-6",
       system: "You are a concierge.",
-      messages: [{ role: "user", content: "What should I do Friday?" }],
+      messages: [{ role: "user", content: [{ text: "What should I do Friday?" }] }],
       ctx: makeCtx(),
     });
 
     expect(result.reply).toBe("Enjoy the show!");
     expect(result.events).toHaveLength(1);
     expect(result.events[0].id).toBe("ev-1");
+    expect(result.events[0].reason).toBe("You like indie rock. This one is at the Van Buren.");
+    expect(calls).toHaveLength(3);
+    expect(calls[2].system[0].text).toContain("Humanizer draft, audit, and final rewrite");
 
     // Second request must carry the assistant turn + a matching tool_result
     const second = calls[1];
@@ -78,49 +91,52 @@ describe("runAgentLoop", () => {
     const toolResultTurn = second.messages.at(-1);
     expect(assistantTurn.role).toBe("assistant");
     expect(toolResultTurn.role).toBe("user");
-    expect(toolResultTurn.content[0].type).toBe("tool_result");
-    expect(toolResultTurn.content[0].tool_use_id).toBe("tu_1");
+    expect(toolResultTurn.content[0].toolResult.toolUseId).toBe("tu_1");
   });
 
   it("stops after maxIterations to prevent runaway loops", async () => {
-    const { client } = fakeAnthropic([
+    const { client } = fakeBedrock([
       {
-        stop_reason: "tool_use",
-        content: [{ type: "tool_use", id: "tu_x", name: "present_events", input: { events: [] } }],
+        stopReason: "tool_use",
+        output: { message: { role: "assistant", content: [
+          { toolUse: { toolUseId: "tu_x", name: "present_events", input: { events: [] } } },
+        ] } },
       },
     ]);
 
     const result = await runAgentLoop({
-      anthropic: client as any,
-      model: "claude-sonnet-5",
+      bedrock: client as any,
+      model: "us.anthropic.claude-sonnet-4-6",
       system: "sys",
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", content: [{ text: "hi" }] }],
       ctx: makeCtx(),
       maxIterations: 3,
     });
 
-    expect((client.messages.create as any).mock.calls.length).toBe(3);
+    expect((client.converse as any).mock.calls.length).toBe(3);
     expect(result.reply.length).toBeGreaterThan(0); // still returns something usable
   });
 
   it("marks failed tool executions as errors in the tool_result", async () => {
-    const { client, calls } = fakeAnthropic([
+    const { client, calls } = fakeBedrock([
       {
-        stop_reason: "tool_use",
-        content: [{ type: "tool_use", id: "tu_bad", name: "no_such_tool", input: {} }],
+        stopReason: "tool_use",
+        output: { message: { role: "assistant", content: [
+          { toolUse: { toolUseId: "tu_bad", name: "no_such_tool", input: {} } },
+        ] } },
       },
-      { stop_reason: "end_turn", content: [{ type: "text", text: "Sorry about that." }] },
+      { stopReason: "end_turn", output: { message: { role: "assistant", content: [{ text: "Sorry about that." }] } } },
     ]);
 
     await runAgentLoop({
-      anthropic: client as any,
-      model: "claude-sonnet-5",
+      bedrock: client as any,
+      model: "us.anthropic.claude-sonnet-4-6",
       system: "sys",
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", content: [{ text: "hi" }] }],
       ctx: makeCtx(),
     });
 
-    const toolResult = calls[1].messages.at(-1).content[0];
-    expect(toolResult.is_error).toBe(true);
+    const toolResult = calls[1].messages.at(-1).content[0].toolResult;
+    expect(toolResult.status).toBe("error");
   });
 });

@@ -46,6 +46,15 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("present_events");
   });
 
+  it("asks for human, specific copy and a silent audit pass", () => {
+    const prompt = buildSystemPrompt(fullProfile, [], new Date());
+    expect(prompt).toContain("knowledgeable friend");
+    expect(prompt).toContain("Specific observations beat generic praise");
+    expect(prompt).toContain("what still sounds AI-generated");
+    expect(prompt).toContain("no more than 35 words");
+    expect(prompt).toContain("Do not use em dashes");
+  });
+
   it("is honest about distance being a straight-line approximation", () => {
     const prompt = buildSystemPrompt(fullProfile, [], new Date());
     expect(prompt.toLowerCase()).toContain("straight-line");
