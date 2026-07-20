@@ -5,6 +5,7 @@ out/
 .env.local
 .env*.local
 *.tsbuildinfo
+dev-server.log
+dev-server-error.log
 next-env.d.ts
 .vercel
-!.env.example

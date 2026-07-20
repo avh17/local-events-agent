@@ -4,7 +4,7 @@ Weekender is a local events concierge. A user describes what they feel like doin
 
 ## What it does
 
-- Signs users in with a six-digit code sent by email.
+- Signs users in with an eight-digit code sent by email.
 - Remembers each user's home location, interests, budget, and preferred travel distance.
 - Searches for events and turns the results into a short list of useful recommendations.
 - Learns from thumbs-up and thumbs-down feedback on event cards.

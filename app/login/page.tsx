@@ -65,7 +65,7 @@ function LoginForm() {
       </h1>
       <p>
         {step === "email"
-          ? "No passwords — we'll email you a six-digit code."
+          ? "No passwords — we'll email you an eight-digit code."
           : `Enter the code sent to ${email}.`}
       </p>
       {step === "email" ? (
@@ -89,14 +89,14 @@ function LoginForm() {
             required
             autoComplete="one-time-code"
             inputMode="numeric"
-            pattern="[0-9]{6}"
-            maxLength={6}
-            aria-label="Six-digit verification code"
-            placeholder="123456"
+            pattern="[0-9]{8}"
+            maxLength={8}
+            aria-label="Eight-digit verification code"
+            placeholder="12345678"
             value={token}
-            onChange={(e) => setToken(e.target.value.replace(/\D/g, "").slice(0, 6))}
+            onChange={(e) => setToken(e.target.value.replace(/\D/g, "").slice(0, 8))}
           />
-          <button className="btn" type="submit" disabled={status === "verifying" || token.length !== 6}>
+          <button className="btn" type="submit" disabled={status === "verifying" || token.length !== 8}>
             {status === "verifying" ? "Verifying…" : "Verify code"}
           </button>
         </form>
